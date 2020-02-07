@@ -1,23 +1,5 @@
-use std::collections::HashMap;
-
-use crate::gpio::GPIOPin;
-
-const ENA: u8 = 1;
-const IN1: u8 = 2;
-const OUT1: u8 = 3;
-const GND1: u8 = 4;
-const GND2: u8 = 5;
-const OUT2: u8 = 6;
-const IN2: u8 = 7;
-const VCC2: u8 = 8;
-const ENB: u8 = 9;
-const IN3: u8 = 10;
-const OUT3: u8 = 11;
-const GND3: u8 = 12;
-const GND4: u8 = 13;
-const OUT4: u8 = 14;
-const IN4: u8 = 15;
-const VCC1: u8 = 16;
+use rppal::pwm::{Channel, Polarity, Pwm};
+use rppal::gpio::{Gpio, IoPin, Mode};
 
 /// ENA  --[==()==]-- VCC1
 /// IN1  --[======]-- IN4
@@ -28,13 +10,23 @@ const VCC1: u8 = 16;
 /// IN2  --[==D===]-- IN3
 /// VCC2 --[======]-- ENB
 pub struct L293D {
-  gpios: HashMap<u8, GPIOPin>
+  ldirf: Option<IoPin>,
+  ldirb: Option<IoPin>,
+  rdirf: Option<IoPin>,
+  rdirb: Option<IoPin>, 
+  lpwm: Option<Pwm>,
+  rpwm: Option<Pwm>
 }
 
 impl L293D {
   pub fn new() -> Self {
     return L293D {
-      gpios: HashMap::new()
+      ldirf: None,
+      ldirb: None,
+      rdirf: None,
+      rdirb: None, 
+      lpwm: None,
+      rpwm: None
     };
   }
 
@@ -42,8 +34,8 @@ impl L293D {
    * Sets the speed control gpio pin of the left hand
    * side of the chip.
    */
-  pub fn with_lspeed(mut self, pin: u8) -> Self {
-    self.gpios.insert(ENA, GPIOPin::new(pin).unwrap());
+  pub fn with_lpwm_speed(mut self) -> Self {
+    self.lpwm = Some(Pwm::with_frequency(Channel::Pwm0, 0.0, 0.5, Polarity::Normal, false).unwrap());
     return self;
   }
 
@@ -51,9 +43,13 @@ impl L293D {
    * Sets the direction control pins of the left hand
    * side of the chip
    */
-  pub fn with_ldirection(mut self, forward_pin: u8, backward_pin: u8) -> Self {
-    self.gpios.insert(IN1, GPIOPin::new(forward_pin).unwrap());
-    self.gpios.insert(IN2, GPIOPin::new(backward_pin).unwrap());
+  pub fn with_ldirection_pins(mut self, forward_pin: u8, backward_pin: u8) -> Self {
+    let controller = Gpio::new().unwrap();
+    let fpin = controller.get(forward_pin).unwrap();
+    let bpin = controller.get(backward_pin).unwrap();
+
+    self.ldirf = Some(fpin.into_io(Mode::Input));
+    self.ldirb = Some(bpin.into_io(Mode::Input));
     return self;
   }
 
@@ -61,8 +57,8 @@ impl L293D {
    * Sets the speed control pin of the right hand
    * side of the chip
    */
-  pub fn with_rspeed(mut self, pin: u8) -> Self {
-    self.gpios.insert(ENB, GPIOPin::new(pin).unwrap());
+  pub fn with_rpwm_speed(mut self) -> Self {
+    self.rpwm = Some(Pwm::with_frequency(Channel::Pwm1, 0.0, 0.5, Polarity::Normal, false).unwrap());
     return self;
   }
 
@@ -70,28 +66,48 @@ impl L293D {
    * Sets the direction control pins of the right hand
    * side of the chip.
    */
-  pub fn with_rdirection(mut self, forward_pin: u8, backward_pin: u8) -> Self {
-    self.gpios.insert(IN4, GPIOPin::new(forward_pin).unwrap());
-    self.gpios.insert(IN3, GPIOPin::new(backward_pin).unwrap());
+  pub fn with_rdirection_pins(mut self, forward_pin: u8, backward_pin: u8) -> Self {
+    let controller = Gpio::new().unwrap();
+    let fpin = controller.get(forward_pin).unwrap();
+    let bpin = controller.get(backward_pin).unwrap();
+
+    self.rdirf = Some(fpin.into_io(Mode::Input));
+    self.rdirb = Some(bpin.into_io(Mode::Input));
     return self;
   }
 
-  /**
-   * Drives the left hand side motor forward. Use only
-   * if connected device is a bi-directional motor.
-   */
-  pub fn lforward(&mut self) {
-    self.gpios.get_mut(&IN1).unwrap().set_low();
-    self.gpios.get_mut(&IN2).unwrap().set_high();
+  pub fn activate_lpwm_speed(self) {
+    self.lpwm.unwrap().enable().unwrap();
+  }
+
+  pub fn set_lspeed(self, hertz: f64) {
+    self.lpwm.unwrap().set_frequency(hertz, 0.5);
   }
 
   /**
    * Drives the left hand side motor forward. Use only
    * if connected device is a bi-directional motor.
    */
-  pub fn lbackward(&mut self) {
-    self.gpios.get_mut(&IN1).unwrap().set_high();
-    self.gpios.get_mut(&IN2).unwrap().set_low();
+  pub fn lforward(self) {
+    self.ldirb.unwrap().set_low();
+    self.ldirf.unwrap().set_high();
+  }
+
+  /**
+   * Drives the left hand side motor forward. Use only
+   * if connected device is a bi-directional motor.
+   */
+  pub fn lbackward(self) {
+    self.ldirb.unwrap().set_high();
+    self.ldirf.unwrap().set_low();
+  }
+
+  pub fn activate_rpwm_speed(&self) {
+    self.lpwm.as_ref().unwrap().enable().unwrap();
+  }
+
+  pub fn set_rspeed(&self, hertz: f64) {
+    self.rpwm.as_ref().unwrap().set_frequency(hertz, 0.5);
   }
 
   /**
@@ -99,8 +115,8 @@ impl L293D {
    * if connected device is a bi-directional motor.
    */
   pub fn rforward(&mut self) {
-    self.gpios.get_mut(&IN4).unwrap().set_low();
-    self.gpios.get_mut(&IN3).unwrap().set_high();
+    self.rdirb.as_mut().unwrap().set_low();
+    self.rdirf.as_mut().unwrap().set_high();
   }
 
   /**
@@ -108,8 +124,8 @@ impl L293D {
    * if connected device is a bi-directional motor.
    */
   pub fn rbackward(&mut self) {
-    self.gpios.get_mut(&IN4).unwrap().set_high();
-    self.gpios.get_mut(&IN3).unwrap().set_low();
+    self.rdirb.as_mut().unwrap().set_high();
+    self.rdirf.as_mut().unwrap().set_low();
   }
 
 }

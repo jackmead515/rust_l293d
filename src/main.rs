@@ -1,21 +1,23 @@
 use std::time::Duration;
 use std::thread;
 
-mod gpio;
 mod controller;
 
 
 fn main() {
   let mut device = controller::L293D::new()
-    .with_lspeed(2)
-    .with_ldirection(3, 4)
-    .with_rspeed(14)
-    .with_rdirection(15, 18);
+    .with_lpwm_speed()
+    .with_ldirection_pins(3, 4)
+    .with_rpwm_speed()
+    .with_rdirection_pins(15, 18);
+
+  device.set_rspeed(50.0);
+  device.activate_rpwm_speed();
 
   loop {
-    device.lforward();
+    device.rforward();
     thread::sleep(Duration::from_millis(500));
-    device.lbackward();
+    device.rbackward();
     thread::sleep(Duration::from_millis(500));
   }
 }
